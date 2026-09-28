@@ -1,0 +1,42 @@
+# Fork-owned Cloud Run image for paseo-relay. Upstream's Dockerfile is left
+# untouched and is not used for this deployment.
+#
+# Why (2026-09-28): On-Demand Scanning flags 16 CRITICAL/HIGH findings in
+# upstream's runtime base debian:bookworm-slim (perl x12, acl x2, attr, zlib),
+# none of which has a Debian fix (fixedVersion MAXIMUM). This variant keeps the
+# same Elixir/Erlang versions as upstream's Dockerfile but builds and runs on
+# Alpine, which drops the unneeded Debian userland packages from the runtime.
+#
+# Build deps: mix.lock deps are pure Erlang built with :make/:rebar3/:mix (no
+# NIFs, no elixir_make), so no C toolchain is strictly required; build-base and
+# git are installed defensively for rebar3/make hooks.
+FROM hexpm/elixir:1.20.2-erlang-29.0.2-alpine-3.24.1 AS build
+WORKDIR /app
+ENV MIX_ENV=prod
+RUN apk add --no-cache build-base git
+COPY mix.exs mix.lock ./
+RUN mix local.hex --force && mix local.rebar --force && mix deps.get --only prod
+COPY config config
+COPY lib lib
+RUN mix compile && mix release
+
+# musl runtime libs for the ERTS release. SCTP is deliberately absent: the
+# relay only uses :ranch_tcp / :cowboy_clear (lib/paseo_relay/listener.ex) and
+# never calls gen_sctp, so upstream's libsctp1 is not needed here.
+FROM alpine:3.24
+RUN apk add --no-cache \
+        libstdc++ libgcc ncurses-libs openssl ca-certificates zlib \
+    && addgroup -S app \
+    && adduser -S -G app app
+WORKDIR /app
+COPY --from=build /app/_build/prod/rel/paseo_relay ./
+RUN chown -R app:app /app
+USER app
+ENV HOME=/app \
+    PASEO_RELAY_HOST=0.0.0.0 \
+    PASEO_RELAY_PORT=4000 \
+    PASEO_RELAY_DRAIN=false \
+    LANG=C.UTF-8
+EXPOSE 4000
+ENTRYPOINT ["/app/bin/paseo_relay"]
+CMD ["start"]
