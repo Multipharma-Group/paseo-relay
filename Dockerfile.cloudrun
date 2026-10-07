@@ -24,7 +24,8 @@ RUN mix compile && mix release
 # relay only uses :ranch_tcp / :cowboy_clear (lib/paseo_relay/listener.ex) and
 # never calls gen_sctp, so upstream's libsctp1 is not needed here.
 FROM alpine:3.24
-RUN apk add --no-cache \
+# --upgrade pulls the patched zlib (CVE-2026-85091) until the alpine base image is rebuilt with 1.3.2-r1 or later.
+RUN apk add --no-cache --upgrade \
         libstdc++ libgcc ncurses-libs openssl ca-certificates zlib \
     && addgroup -S app \
     && adduser -S -G app app
